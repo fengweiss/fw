@@ -1,0 +1,139 @@
+import sys
+import pandas as pd
+import openpyxl
+
+# SLA超时问题计算
+
+# 读取数据文件，指定 / 这个值为缺失值
+df = pd.read_excel('/Users/fengwei/Downloads/离线运营表.xlsx', na_values='/')
+total_count = len(df)
+print("问题总数：", total_count)
+
+# 定义一个函数，根据问题等级和支持响应时间GAP判断是否超时
+def is_timeout(level, time):
+    if level == 'L1' and time > 10:
+        return True
+    elif level == 'L2' and time > 15:
+        return True
+    elif level == 'L3' and time > 30:
+        return True
+    elif level == 'L4' and time > 60:
+        return True
+    else:
+        return False
+
+# 定义一个函数，根据问题等级和业务恢复时间GAP判断是否超时
+def is_recovery_timeout(level, time):
+    if level == 'L1' and time > 30:
+        return True
+    elif level == 'L2' and time > 60:
+        return True
+    elif level == 'L3' and time > 120:
+        return True
+    else:
+        return False
+
+# 定义一个函数，根据问题等级和提供解决方案时间GAP判断是否超时
+def is_solution_timeout(level, time):
+    if level == 'L1' and time > 1:
+        return True
+    elif level == 'L2' and time > 2:
+        return True
+    elif level == 'L3' and time > 5:
+        return True
+    elif level == 'L4' and time > 7:
+        return True
+    else:
+        return False
+
+# 定义一个函数，根据问题等级和出Patch包时间GAP判断是否超时
+def is_patch_timeout(level, time):
+    if level == 'L1' and time > 3:
+        return True
+    elif level == 'L2' and time > 7:
+        return True
+    else:
+        return False
+
+# 应用函数，创建新列，表示是否超时
+df['响应是否超时'] = df.apply(lambda x: is_timeout(x['问题等级'], x['支持响应时间GAP（分钟）']), axis=1)
+df['业务恢复是否超时'] = df.apply(lambda x: is_recovery_timeout(x['问题等级'], x['业务恢复时间Gap（分钟）']), axis=1)
+df['提供解决方案是否超时'] = df.apply(lambda x: is_solution_timeout(x['问题等级'], x['提供解决方案时间GAP（天）']), axis=1)
+df['预期出Patch包是否超时'] = df.apply(lambda x: is_patch_timeout(x['问题等级'], x['出Patch包时间GAP（天）']), axis=1)
+
+# 根据问题等级分组，统计各种超时问题的数量
+counts = df.groupby('问题等级')[['响应是否超时', '业务恢复是否超时', '提供解决方案是否超时', '预期出Patch包是否超时']].sum().astype(int)
+
+# 打印结果
+print('各等级超时问题数：' )
+print(counts )
+print('-' * 30) # 添加分隔符
+
+# 根据产线分组，统计各种超时问题的数量
+counts = df.groupby('产线')[['响应是否超时', '业务恢复是否超时', '提供解决方案是否超时', '预期出Patch包是否超时']].sum().astype(int)
+
+# 打印结果
+print('各产线超时问题数：' )
+print(counts )
+print('-' * 30) # 添加分隔符
+
+
+# 增加一个输出各等级总超时问题数，以及所有超时问题数；再增加 响应是否超时  业务恢复是否超时  提供解决方案是否超时  预期出Patch包是否超时 这几个各自的总超时数
+counts['总超时问题数'] = counts.sum(axis=1)
+total_timeout = counts['总超时问题数'].sum()
+response_timeout = counts['响应是否超时'].sum()
+recovery_timeout = counts['业务恢复是否超时'].sum()
+solution_timeout = counts['提供解决方案是否超时'].sum()
+patch_timeout = counts['预期出Patch包是否超时'].sum()
+
+print(f'超时问题总数: {total_timeout}')
+print(f'支持响应超时总数: {response_timeout}')
+print(f'业务恢复超时总数: {recovery_timeout}')
+print(f'提供解决方案超时总数: {solution_timeout}')
+print(f'预期出Patch包超时总数: {patch_timeout}')
+
+print('-' * 30) # 添加分隔符
+
+# 各等级超时问题总数
+level_timeout = counts['总超时问题数'].to_dict()
+for level, count in level_timeout.items():
+    print(f'{level}等级超时问题总数: {count}')
+print('-*-' * 30) # 添加分隔符
+
+#================================================================================================
+
+
+
+
+
+# 根据产线和问题等级分组，计算各组的问题总数和超时问题数
+counts_by_line = df.groupby(['产线', '问题等级'])[['响应是否超时', '业务恢复是否超时', '提供解决方案是否超时', '预期出Patch包是否超时']].agg(['count', 'sum']).astype(int)
+
+# 打印结果
+print(counts_by_line)
+print('-' * 30) # 添加分隔符
+counts_by_line.to_excel('/Users/fengwei/Downloads/counts_by_line2.xlsx')
+
+
+# 定义一个函数，根据问题总数和超时问题数，计算达标率
+def compliance_rate(total, timeout):
+    return round((total - timeout) / total * 100, 2)
+
+# 应用函数，创建新列，表示各项达标率
+counts_by_line['支持响应时长达标率'] = counts_by_line.apply(lambda x: compliance_rate(x[('响应是否超时', 'count')], x[('响应是否超时', 'sum')]), axis=1)
+counts_by_line['业务恢复时长达标率'] = counts_by_line.apply(lambda x: compliance_rate(x[('业务恢复是否超时', 'count')], x[('业务恢复是否超时', 'sum')]), axis=1)
+counts_by_line['提供解决方案时长达标率'] = counts_by_line.apply(lambda x: compliance_rate(x[('提供解决方案是否超时', 'count')], x[('提供解决方案是否超时', 'sum')]), axis=1)
+counts_by_line['给出Patch包时长达标率'] = counts_by_line.apply(lambda x: compliance_rate(x[('预期出Patch包是否超时', 'count')], x[('预期出Patch包是否超时', 'sum')]), axis=1)
+
+# 删除响应是否超时，业务恢复是否超时，提供解决方案是否超时，预期出Patch包是否超时这四列
+counts_by_line = counts_by_line.drop(['响应是否超时', '业务恢复是否超时', '提供解决方案是否超时', '预期出Patch包是否超时'], axis=1)
+
+# 打印结果
+print(counts_by_line)
+# 打印结果，输出counts_by_line内容到Excel表格
+counts_by_line.to_excel('/Users/fengwei/Downloads/counts_by_line.xlsx')
+print('-' * 30) # 添加分隔符
+
+
+exit(0)
+
